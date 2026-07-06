@@ -25,6 +25,10 @@ writeFileSync(join(OUT, ".nojekyll"), "");
 // the export — no history, no stray root files.
 rmSync(join(OUT, ".git"), { recursive: true, force: true });
 run("git init -b gh-pages", OUT);
+// Fresh repo has no identity of its own — set one locally so the commit
+// below doesn't fail (independent of the outer repo's git config).
+run('git config user.name "remember-the-titans"', OUT);
+run('git config user.email "remember-the-titans@users.noreply.github.com"', OUT);
 run("git add -A", OUT);
 run('git commit -m "Deploy static export"', OUT);
 run(
