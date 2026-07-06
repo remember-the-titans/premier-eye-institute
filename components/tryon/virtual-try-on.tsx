@@ -321,9 +321,9 @@ export function VirtualTryOn() {
             Vertical position
             <input
               type="range"
-              min={-0.3}
-              max={0.3}
-              step={0.005}
+              min={-15}
+              max={15}
+              step={0.5}
               value={yOffset}
               onChange={(e) => setYOffset(Number(e.target.value))}
             />
