@@ -4,13 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Camera, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { buildGlassesModel, FRAME_COLORS, LENS_SEPARATION } from "./glasses-model";
+import { buildGlassesModel, FRAME_COLORS, FRAME_OUTER_SPAN } from "./glasses-model";
 
-// Stable MediaPipe Face Landmarker indices for the iris center of each eye —
-// the true pupil position, used as ground truth for both scale (real
-// pupil-to-pupil distance) and position (where the lenses should sit).
+// Stable MediaPipe Face Landmarker indices used to anatomically fit the frame:
+//  - iris centers (pupils): horizontal centering
+//  - outer eye corners: the eye span that drives frame width/scale
+//  - nose bridge: where the frame rests vertically
 const LEFT_IRIS = 468;
 const RIGHT_IRIS = 473;
+const LEFT_EYE_OUTER = 33;
+const RIGHT_EYE_OUTER = 263;
+const NOSE_BRIDGE = 168;
 
 type Status = "idle" | "requesting" | "active" | "denied" | "error";
 
@@ -162,18 +166,27 @@ export function VirtualTryOn() {
             tmpMatrix.decompose(tmpPosition, tmpQuaternion, tmpScale);
             const depth = Math.abs(tmpPosition.z);
 
-            const left = landmarks[LEFT_IRIS];
-            const right = landmarks[RIGHT_IRIS];
+            const leftIris = landmarks[LEFT_IRIS];
+            const rightIris = landmarks[RIGHT_IRIS];
+            const leftOuter = landmarks[LEFT_EYE_OUTER];
+            const rightOuter = landmarks[RIGHT_EYE_OUTER];
+            const bridge = landmarks[NOSE_BRIDGE];
             const videoWidth = video.videoWidth;
             const videoHeight = video.videoHeight;
-            const midX = (left.x + right.x) / 2;
-            const midY = (left.y + right.y) / 2;
-            const eyePixelDistance = Math.hypot(
-              (right.x - left.x) * videoWidth,
-              (right.y - left.y) * videoHeight,
-            );
 
-            if (depth > 0 && eyePixelDistance > 0) {
+            // Scale off the outer-eye-corner span (the visible width of the
+            // eyes) so the frame's outer edge lands near the temples instead
+            // of overflowing. Center horizontally on the pupils, and rest the
+            // frame vertically on the nose bridge — the point where real
+            // glasses actually sit.
+            const eyeSpanPixels = Math.hypot(
+              (rightOuter.x - leftOuter.x) * videoWidth,
+              (rightOuter.y - leftOuter.y) * videoHeight,
+            );
+            const centerX = (leftIris.x + rightIris.x) / 2;
+            const centerY = bridge.y;
+
+            if (depth > 0 && eyeSpanPixels > 0) {
               const vFovRad = (camera.fov * Math.PI) / 180;
               const hFovRad =
                 2 * Math.atan(Math.tan(vFovRad / 2) * camera.aspect);
@@ -181,9 +194,10 @@ export function VirtualTryOn() {
               const worldHeightAtDepth = worldWidthAtDepth / camera.aspect;
               const pixelsPerWorldUnit = videoWidth / worldWidthAtDepth;
 
-              autoScale = eyePixelDistance / pixelsPerWorldUnit / LENS_SEPARATION;
-              anchorX = (midX - 0.5) * worldWidthAtDepth;
-              anchorY = -(midY - 0.5) * worldHeightAtDepth;
+              autoScale =
+                eyeSpanPixels / pixelsPerWorldUnit / FRAME_OUTER_SPAN;
+              anchorX = (centerX - 0.5) * worldWidthAtDepth;
+              anchorY = -(centerY - 0.5) * worldHeightAtDepth;
             }
 
             faceAnchor.quaternion.copy(tmpQuaternion);
