@@ -4,17 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Camera, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { buildGlassesModel, FRAME_COLORS, FRAME_OUTER_SPAN } from "./glasses-model";
+import { buildGlassesModel, FRAME_COLORS, LENS_SEPARATION } from "./glasses-model";
 
 // Stable MediaPipe Face Landmarker indices used to anatomically fit the frame:
-//  - iris centers (pupils): horizontal centering
-//  - outer eye corners: the eye span that drives frame width/scale
+//  - iris centers (pupils): drive both scale (measured pupil distance) and
+//    horizontal centering — pinning the lenses onto the pupils
 //  - nose bridge: where the frame rests vertically
 const LEFT_IRIS = 468;
 const RIGHT_IRIS = 473;
-const LEFT_EYE_OUTER = 33;
-const RIGHT_EYE_OUTER = 263;
 const NOSE_BRIDGE = 168;
+
+// Exponential smoothing factor for scale/position (0–1): higher snaps faster,
+// lower is smoother but laggier. Kills per-frame landmark jitter.
+const SMOOTHING = 0.35;
 
 type Status = "idle" | "requesting" | "active" | "denied" | "error";
 
@@ -135,13 +137,17 @@ export function VirtualTryOn() {
       window.addEventListener("resize", resize);
 
       let lastVideoTime = -1;
-      let autoScale = 1;
-      let anchorX = 0;
-      let anchorY = 0;
+      // Smoothed fit state — lerped toward each frame's measurement.
+      let smScale = 0;
+      let smX = 0;
+      let smY = 0;
+      let smZ = 0;
+      let hasFit = false;
       const tmpMatrix = new THREE.Matrix4();
       const tmpPosition = new THREE.Vector3();
       const tmpQuaternion = new THREE.Quaternion();
       const tmpScale = new THREE.Vector3();
+      const smQuaternion = new THREE.Quaternion();
 
       function renderLoop() {
         if (cancelled) return;
@@ -155,38 +161,33 @@ export function VirtualTryOn() {
           const landmarks = result.faceLandmarks?.[0];
 
           if (matrixData && landmarks) {
-            // Rotation only comes from the tracking matrix (head tilt/turn).
-            // Position and scale are derived directly from the measured
-            // pupil (iris) landmarks in video pixels — reverse-projected
-            // through our own camera at the tracked depth — because that's
-            // what's actually on screen. Trusting the matrix's own
-            // translation for position previously left the frame floating
-            // above the eyes instead of sitting on them.
+            // Rotation comes from the tracking matrix (head tilt/turn).
+            // Scale and position are derived from the wearer's *measured*
+            // pupil (iris) landmarks, reverse-projected through our camera
+            // at the tracked depth. Scaling the frame so its ~63mm lens
+            // separation maps to the measured pupil distance pins the lens
+            // centers onto the pupils — so it fits any face naturally,
+            // regardless of face size or distance from the camera.
             tmpMatrix.fromArray(matrixData as unknown as number[]);
             tmpMatrix.decompose(tmpPosition, tmpQuaternion, tmpScale);
             const depth = Math.abs(tmpPosition.z);
 
             const leftIris = landmarks[LEFT_IRIS];
             const rightIris = landmarks[RIGHT_IRIS];
-            const leftOuter = landmarks[LEFT_EYE_OUTER];
-            const rightOuter = landmarks[RIGHT_EYE_OUTER];
             const bridge = landmarks[NOSE_BRIDGE];
             const videoWidth = video.videoWidth;
             const videoHeight = video.videoHeight;
 
-            // Scale off the outer-eye-corner span (the visible width of the
-            // eyes) so the frame's outer edge lands near the temples instead
-            // of overflowing. Center horizontally on the pupils, and rest the
-            // frame vertically on the nose bridge — the point where real
-            // glasses actually sit.
-            const eyeSpanPixels = Math.hypot(
-              (rightOuter.x - leftOuter.x) * videoWidth,
-              (rightOuter.y - leftOuter.y) * videoHeight,
+            const pupilPixels = Math.hypot(
+              (rightIris.x - leftIris.x) * videoWidth,
+              (rightIris.y - leftIris.y) * videoHeight,
             );
+            // Center horizontally between the pupils; sit vertically on the
+            // nose bridge — where glasses actually rest.
             const centerX = (leftIris.x + rightIris.x) / 2;
             const centerY = bridge.y;
 
-            if (depth > 0 && eyeSpanPixels > 0) {
+            if (depth > 0 && pupilPixels > 0) {
               const vFovRad = (camera.fov * Math.PI) / 180;
               const hFovRad =
                 2 * Math.atan(Math.tan(vFovRad / 2) * camera.aspect);
@@ -194,15 +195,25 @@ export function VirtualTryOn() {
               const worldHeightAtDepth = worldWidthAtDepth / camera.aspect;
               const pixelsPerWorldUnit = videoWidth / worldWidthAtDepth;
 
-              autoScale =
-                eyeSpanPixels / pixelsPerWorldUnit / FRAME_OUTER_SPAN;
-              anchorX = (centerX - 0.5) * worldWidthAtDepth;
-              anchorY = -(centerY - 0.5) * worldHeightAtDepth;
+              const targetScale =
+                pupilPixels / pixelsPerWorldUnit / LENS_SEPARATION;
+              const targetX = (centerX - 0.5) * worldWidthAtDepth;
+              const targetY = -(centerY - 0.5) * worldHeightAtDepth;
+              const targetZ = -depth;
+
+              // First detection snaps; afterwards ease toward the target.
+              const t = hasFit ? SMOOTHING : 1;
+              smScale += (targetScale - smScale) * t;
+              smX += (targetX - smX) * t;
+              smY += (targetY - smY) * t;
+              smZ += (targetZ - smZ) * t;
+              smQuaternion.slerp(tmpQuaternion, t);
+              hasFit = true;
             }
 
-            faceAnchor.quaternion.copy(tmpQuaternion);
-            faceAnchor.position.set(anchorX, anchorY, -depth);
-            glassesRig.visible = true;
+            faceAnchor.quaternion.copy(smQuaternion);
+            faceAnchor.position.set(smX, smY, smZ);
+            glassesRig.visible = hasFit;
             setFaceFound(true);
           } else {
             glassesRig.visible = false;
@@ -223,7 +234,7 @@ export function VirtualTryOn() {
           glassesMeshRef.current = rebuilt;
         }
 
-        glassesRig.scale.setScalar(autoScale * scaleRef.current);
+        glassesRig.scale.setScalar(smScale * scaleRef.current);
         glassesRig.position.set(0, yOffsetRef.current, 0);
 
         renderer?.render(scene, camera);
@@ -371,8 +382,8 @@ export function VirtualTryOn() {
             Size
             <input
               type="range"
-              min={0.8}
-              max={1.2}
+              min={0.7}
+              max={1.4}
               step={0.01}
               value={scale}
               onChange={(e) => setScale(Number(e.target.value))}

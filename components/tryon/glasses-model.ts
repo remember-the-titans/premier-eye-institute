@@ -2,21 +2,19 @@ import * as THREE from "three";
 
 /**
  * Procedural placeholder frame — stands in for a real branded .glb model.
- * Built at an arbitrary fixed unit scale (doesn't need to match any real
- * mm convention) because the try-on component scales it dynamically each
- * frame to match the wearer's actual measured face in the video.
- *
- * Two exported reference measurements let the component fit it anatomically:
- *  - LENS_SEPARATION: center-to-center distance between the two lenses
- *    (aligns with pupil-to-pupil distance).
- *  - FRAME_OUTER_SPAN: the frame's full outer width — matched to the
- *    wearer's measured outer-eye-corner span so the lenses frame the eyes
- *    rather than overflowing the face.
+ * Built in millimeter-ish units matching real-world facial anatomy, so the
+ * try-on component can scale it by a single anatomical measurement:
+ *  - LENS_SEPARATION (~63mm): center-to-center distance between the two
+ *    lenses, aligned with the average human pupil-to-pupil distance. The
+ *    component scales the frame so this maps to the wearer's *measured*
+ *    pupil distance each frame — which pins the lens centers onto the
+ *    pupils and makes the fit scale naturally with any face size.
+ * The lens radius is then a realistic proportion of that, so the lenses
+ * frame the eyes the way real glasses do.
  * See the auto-fit logic in virtual-try-on.tsx.
  */
-const LENS_RADIUS = 15;
+const LENS_RADIUS = 19;
 export const LENS_SEPARATION = 63;
-export const FRAME_OUTER_SPAN = LENS_SEPARATION + LENS_RADIUS * 2;
 
 export function buildGlassesModel(color: string) {
   const group = new THREE.Group();
