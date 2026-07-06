@@ -54,9 +54,9 @@
   /* Premier Eye Institute — DESIGN.md tokens. The accent is ONE variable:
      switch the three accent values to move the whole site to another hue. */
   --ink: #1b1714;
-  --accent: #e7592a;
-  --accent-hover: #c9481e;
-  --accent-tint: #fcebe1;
+  --accent: #dc2626;
+  --accent-hover: #b91c1c;
+  --accent-tint: #fce8e8;
   --bg: #ffffff;
   --surface: #ffffff;
   --surface-alt: #fbf6f1;

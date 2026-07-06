@@ -216,6 +216,7 @@ export const nav = [
   { label: "About", href: "/about" },
   { label: "Services", href: "/services" },
   { label: "Eyewear", href: "/eyewear" },
+  { label: "Try It On", href: "/try-on" },
   { label: "Reviews", href: "/reviews" },
   { label: "Insurance", href: "/payments-insurance" },
   { label: "Contact", href: "/contact" },

@@ -104,7 +104,14 @@ export default function EyewearPage() {
             >
               Book an exam
             </Link>{" "}
-            and we&apos;ll walk the optical together afterward.
+            and we&apos;ll walk the optical together afterward. Or{" "}
+            <Link
+              href="/try-on"
+              className="font-semibold text-accent underline-offset-4 hover:underline"
+            >
+              try on a frame virtually
+            </Link>{" "}
+            with your webcam.
           </p>
         </Reveal>
       </section>
