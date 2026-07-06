@@ -28,11 +28,11 @@ run("git init -b gh-pages", OUT);
 run("git add -A", OUT);
 run('git commit -m "Deploy static export"', OUT);
 run(
-  "git push -f https://github.com/ishaanpthegoat/premier-eye-institute.git gh-pages",
+  "git push -f https://github.com/remember-the-titans/premier-eye-institute.git gh-pages",
   OUT
 );
 rmSync(join(OUT, ".git"), { recursive: true, force: true });
 
 console.log(
-  "\nDeployed. Live in ~a minute at https://ishaanpthegoat.github.io/premier-eye-institute/"
+  "\nDeployed. Live in ~a minute at https://remember-the-titans.github.io/premier-eye-institute/"
 );
