@@ -27,7 +27,7 @@ export function buildGlassesModel(color: string) {
     thickness: 3,
   });
 
-  const lensRadius = 28.5;
+  const lensRadius = 21;
   const lensSeparation = LENS_SEPARATION;
 
   const ringGeometry = new THREE.TorusGeometry(lensRadius, 2.1, 12, 32);

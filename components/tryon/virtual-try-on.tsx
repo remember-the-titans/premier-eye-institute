@@ -6,10 +6,11 @@ import { Camera, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { buildGlassesModel, FRAME_COLORS, LENS_SEPARATION } from "./glasses-model";
 
-// Stable MediaPipe Face Landmarker indices for the outer corner of each eye —
-// used as a ground-truth pixel measurement to auto-fit the frame's scale.
-const LEFT_EYE_OUTER = 33;
-const RIGHT_EYE_OUTER = 263;
+// Stable MediaPipe Face Landmarker indices for the iris center of each eye —
+// the true pupil position, used as ground truth for both scale (real
+// pupil-to-pupil distance) and position (where the lenses should sit).
+const LEFT_IRIS = 468;
+const RIGHT_IRIS = 473;
 
 type Status = "idle" | "requesting" | "active" | "denied" | "error";
 
@@ -107,7 +108,6 @@ export function VirtualTryOn() {
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
       const faceAnchor = new THREE.Group();
-      faceAnchor.matrixAutoUpdate = false;
       scene.add(faceAnchor);
 
       const glassesRig = new THREE.Group();
@@ -132,7 +132,12 @@ export function VirtualTryOn() {
 
       let lastVideoTime = -1;
       let autoScale = 1;
-      const facePosition = new THREE.Vector3();
+      let anchorX = 0;
+      let anchorY = 0;
+      const tmpMatrix = new THREE.Matrix4();
+      const tmpPosition = new THREE.Vector3();
+      const tmpQuaternion = new THREE.Quaternion();
+      const tmpScale = new THREE.Vector3();
 
       function renderLoop() {
         if (cancelled) return;
@@ -142,48 +147,49 @@ export function VirtualTryOn() {
         if (video.currentTime !== lastVideoTime) {
           lastVideoTime = video.currentTime;
           const result = faceLandmarker.detectForVideo(video, performance.now());
-          const matrixData =
-            result.facialTransformationMatrixes?.[0]?.data;
+          const matrixData = result.facialTransformationMatrixes?.[0]?.data;
           const landmarks = result.faceLandmarks?.[0];
 
-          if (matrixData) {
-            faceAnchor.matrix.fromArray(matrixData as unknown as number[]);
-            faceAnchor.matrixWorldNeedsUpdate = true;
+          if (matrixData && landmarks) {
+            // Rotation only comes from the tracking matrix (head tilt/turn).
+            // Position and scale are derived directly from the measured
+            // pupil (iris) landmarks in video pixels — reverse-projected
+            // through our own camera at the tracked depth — because that's
+            // what's actually on screen. Trusting the matrix's own
+            // translation for position previously left the frame floating
+            // above the eyes instead of sitting on them.
+            tmpMatrix.fromArray(matrixData as unknown as number[]);
+            tmpMatrix.decompose(tmpPosition, tmpQuaternion, tmpScale);
+            const depth = Math.abs(tmpPosition.z);
+
+            const left = landmarks[LEFT_IRIS];
+            const right = landmarks[RIGHT_IRIS];
+            const videoWidth = video.videoWidth;
+            const videoHeight = video.videoHeight;
+            const midX = (left.x + right.x) / 2;
+            const midY = (left.y + right.y) / 2;
+            const eyePixelDistance = Math.hypot(
+              (right.x - left.x) * videoWidth,
+              (right.y - left.y) * videoHeight,
+            );
+
+            if (depth > 0 && eyePixelDistance > 0) {
+              const vFovRad = (camera.fov * Math.PI) / 180;
+              const hFovRad =
+                2 * Math.atan(Math.tan(vFovRad / 2) * camera.aspect);
+              const worldWidthAtDepth = 2 * depth * Math.tan(hFovRad / 2);
+              const worldHeightAtDepth = worldWidthAtDepth / camera.aspect;
+              const pixelsPerWorldUnit = videoWidth / worldWidthAtDepth;
+
+              autoScale = eyePixelDistance / pixelsPerWorldUnit / LENS_SEPARATION;
+              anchorX = (midX - 0.5) * worldWidthAtDepth;
+              anchorY = -(midY - 0.5) * worldHeightAtDepth;
+            }
+
+            faceAnchor.quaternion.copy(tmpQuaternion);
+            faceAnchor.position.set(anchorX, anchorY, -depth);
             glassesRig.visible = true;
             setFaceFound(true);
-
-            // Auto-fit: measure the wearer's actual eye distance in video
-            // pixels, then figure out what scale our (arbitrary-unit) frame
-            // needs to be for its lens separation to project to that same
-            // pixel width through our camera, at the face's tracked depth.
-            // This makes the fit self-correcting regardless of the frame's
-            // base unit size, the person's face size, or distance from camera.
-            if (landmarks) {
-              const left = landmarks[LEFT_EYE_OUTER];
-              const right = landmarks[RIGHT_EYE_OUTER];
-              const videoWidth = video.videoWidth;
-              const videoHeight = video.videoHeight;
-              const eyePixelDistance = Math.hypot(
-                (right.x - left.x) * videoWidth,
-                (right.y - left.y) * videoHeight,
-              );
-
-              faceAnchor.matrix.decompose(
-                facePosition,
-                new THREE.Quaternion(),
-                new THREE.Vector3(),
-              );
-              const depth = Math.abs(facePosition.z);
-
-              if (depth > 0 && eyePixelDistance > 0) {
-                const vFovRad = (camera.fov * Math.PI) / 180;
-                const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * camera.aspect);
-                const worldWidthAtDepth = 2 * depth * Math.tan(hFovRad / 2);
-                const pixelsPerWorldUnit = videoWidth / worldWidthAtDepth;
-                const targetWorldSeparation = eyePixelDistance / pixelsPerWorldUnit;
-                autoScale = targetWorldSeparation / LENS_SEPARATION;
-              }
-            }
           } else {
             glassesRig.visible = false;
             setFaceFound(false);
@@ -345,7 +351,7 @@ export function VirtualTryOn() {
       {status === "active" && (
         <div className="mx-auto mt-8 grid max-w-sm gap-4 rounded-lg border border-black/5 bg-surface-alt p-5">
           <p className="text-[12px] font-medium uppercase tracking-wide text-soft">
-            Fit adjustment (auto-sized to your face)
+            Fit adjustment (auto-sized and positioned to your eyes)
           </p>
           <label className="grid gap-1.5 text-[13px] text-body-text">
             Size
