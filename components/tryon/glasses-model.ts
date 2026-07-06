@@ -2,11 +2,13 @@ import * as THREE from "three";
 
 /**
  * Procedural placeholder frame — stands in for a real branded .glb model.
- * MediaPipe's canonical face model (and its facialTransformationMatrixes)
- * use roughly real-world millimeter units, with an interpupillary distance
- * around ~63mm — so this frame is built at that scale to match, rather than
- * an arbitrary small unit size (which rendered as a tiny frame on a face).
+ * Built at an arbitrary fixed unit scale (doesn't need to match any real
+ * mm convention) because the try-on component scales it dynamically each
+ * frame to match the wearer's actual measured eye distance in the video —
+ * see LENS_SEPARATION and the auto-fit logic in virtual-try-on.tsx.
  */
+export const LENS_SEPARATION = 63;
+
 export function buildGlassesModel(color: string) {
   const group = new THREE.Group();
   group.name = "glasses-model";
@@ -26,7 +28,7 @@ export function buildGlassesModel(color: string) {
   });
 
   const lensRadius = 28.5;
-  const lensSeparation = 63;
+  const lensSeparation = LENS_SEPARATION;
 
   const ringGeometry = new THREE.TorusGeometry(lensRadius, 2.1, 12, 32);
   const lensGeometry = new THREE.CircleGeometry(lensRadius - 1.5, 32);

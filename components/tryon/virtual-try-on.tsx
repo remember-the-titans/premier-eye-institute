@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Camera, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { buildGlassesModel, FRAME_COLORS } from "./glasses-model";
+import { buildGlassesModel, FRAME_COLORS, LENS_SEPARATION } from "./glasses-model";
+
+// Stable MediaPipe Face Landmarker indices for the outer corner of each eye —
+// used as a ground-truth pixel measurement to auto-fit the frame's scale.
+const LEFT_EYE_OUTER = 33;
+const RIGHT_EYE_OUTER = 263;
 
 type Status = "idle" | "requesting" | "active" | "denied" | "error";
 
@@ -126,6 +131,8 @@ export function VirtualTryOn() {
       window.addEventListener("resize", resize);
 
       let lastVideoTime = -1;
+      let autoScale = 1;
+      const facePosition = new THREE.Vector3();
 
       function renderLoop() {
         if (cancelled) return;
@@ -137,12 +144,46 @@ export function VirtualTryOn() {
           const result = faceLandmarker.detectForVideo(video, performance.now());
           const matrixData =
             result.facialTransformationMatrixes?.[0]?.data;
+          const landmarks = result.faceLandmarks?.[0];
 
           if (matrixData) {
             faceAnchor.matrix.fromArray(matrixData as unknown as number[]);
             faceAnchor.matrixWorldNeedsUpdate = true;
             glassesRig.visible = true;
             setFaceFound(true);
+
+            // Auto-fit: measure the wearer's actual eye distance in video
+            // pixels, then figure out what scale our (arbitrary-unit) frame
+            // needs to be for its lens separation to project to that same
+            // pixel width through our camera, at the face's tracked depth.
+            // This makes the fit self-correcting regardless of the frame's
+            // base unit size, the person's face size, or distance from camera.
+            if (landmarks) {
+              const left = landmarks[LEFT_EYE_OUTER];
+              const right = landmarks[RIGHT_EYE_OUTER];
+              const videoWidth = video.videoWidth;
+              const videoHeight = video.videoHeight;
+              const eyePixelDistance = Math.hypot(
+                (right.x - left.x) * videoWidth,
+                (right.y - left.y) * videoHeight,
+              );
+
+              faceAnchor.matrix.decompose(
+                facePosition,
+                new THREE.Quaternion(),
+                new THREE.Vector3(),
+              );
+              const depth = Math.abs(facePosition.z);
+
+              if (depth > 0 && eyePixelDistance > 0) {
+                const vFovRad = (camera.fov * Math.PI) / 180;
+                const hFovRad = 2 * Math.atan(Math.tan(vFovRad / 2) * camera.aspect);
+                const worldWidthAtDepth = 2 * depth * Math.tan(hFovRad / 2);
+                const pixelsPerWorldUnit = videoWidth / worldWidthAtDepth;
+                const targetWorldSeparation = eyePixelDistance / pixelsPerWorldUnit;
+                autoScale = targetWorldSeparation / LENS_SEPARATION;
+              }
+            }
           } else {
             glassesRig.visible = false;
             setFaceFound(false);
@@ -162,7 +203,7 @@ export function VirtualTryOn() {
           glassesMeshRef.current = rebuilt;
         }
 
-        glassesRig.scale.setScalar(scaleRef.current);
+        glassesRig.scale.setScalar(autoScale * scaleRef.current);
         glassesRig.position.set(0, yOffsetRef.current, 0);
 
         renderer?.render(scene, camera);
@@ -304,14 +345,14 @@ export function VirtualTryOn() {
       {status === "active" && (
         <div className="mx-auto mt-8 grid max-w-sm gap-4 rounded-lg border border-black/5 bg-surface-alt p-5">
           <p className="text-[12px] font-medium uppercase tracking-wide text-soft">
-            Fit calibration (placeholder model)
+            Fit adjustment (auto-sized to your face)
           </p>
           <label className="grid gap-1.5 text-[13px] text-body-text">
             Size
             <input
               type="range"
-              min={0.6}
-              max={1.6}
+              min={0.8}
+              max={1.2}
               step={0.01}
               value={scale}
               onChange={(e) => setScale(Number(e.target.value))}
