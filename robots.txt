@@ -1,0 +1,4 @@
+User-Agent: *
+Allow: /
+
+Sitemap: https://peicare.com/sitemap.xml
