@@ -78,6 +78,59 @@ const jsonLd = {
   founder: { "@type": "Person", name: site.doctor, jobTitle: "Optometrist" },
 };
 
+/*
+  Content-Security-Policy — partial, GitHub-Pages-compatible stopgap.
+
+  GitHub Pages can't set HTTP response headers, so we ship CSP as a
+  <meta http-equiv> tag instead. This is weaker than a real header (see
+  caveats below) but still meaningfully constrains what can execute/load.
+  The policy is tailored to what THIS site actually loads (audited from the
+  static export), not a copy-pasted generic policy:
+
+    - script-src: 'self' for our chunks + 'unsafe-inline' because Next's
+      static export emits ~30 inline hydration scripts (self.__next_f.push)
+      and a static export cannot attach a per-request nonce. 'wasm-unsafe-eval'
+      is required for the self-hosted MediaPipe FaceLandmarker WASM (try-on).
+    - style-src: 'unsafe-inline' for the ~46 inline style="" attributes React
+      / framer-motion / Tailwind emit; there is no way to nonce those here.
+    - font-src / img-src: 'self' — next/font self-hosts the woff2 files and all
+      images live under /public. No third-party font or image CDNs.
+    - connect-src: 'self' — the only runtime fetches are the self-hosted
+      MediaPipe wasm/model under /mediapipe (CDN dependency removed in the
+      supply-chain fix). data:/blob: cover WASM + canvas/worker internals.
+    - object-src 'none', base-uri 'self', form-action 'self' — hardening with
+      no cost to this site (no <object>, no external form posts).
+
+  Dev-only: Turbopack HMR needs 'unsafe-eval' and a websocket, so those are
+  added only when NODE_ENV !== 'production'. They are NOT present in the
+  exported production build that ships to Pages.
+
+  NOT enforceable via <meta> (silently ignored by browsers in meta form) —
+  these require real HTTP headers and are deferred to the Vercel/Netlify
+  migration (see SECURITY_TODO.md):
+    - frame-ancestors  (clickjacking; X-Frame-Options is also header-only)
+    - report-uri / report-to  (violation reporting)
+    - Strict-Transport-Security, X-Content-Type-Options, Referrer-Policy
+  Also note: a <meta> CSP only governs content that appears after it in the
+  document, so it is inherently a partial control vs. a response header.
+*/
+const isDev = process.env.NODE_ENV !== "production";
+const cspDirectives = [
+  `default-src 'self'`,
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
+  `style-src 'self' 'unsafe-inline'`,
+  `img-src 'self' data: blob:`,
+  `font-src 'self'`,
+  `connect-src 'self'${isDev ? " ws: wss:" : ""}`,
+  `media-src 'self' blob:`,
+  `worker-src 'self' blob:`,
+  `object-src 'none'`,
+  `base-uri 'self'`,
+  `form-action 'self'`,
+  `frame-src 'none'`,
+];
+const cspContent = cspDirectives.join("; ");
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -89,6 +142,12 @@ export default function RootLayout({
       className={`${newsreader.variable} ${manrope.variable} h-full antialiased`}
       data-scroll-behavior="smooth"
     >
+      <head>
+        {/* Keep first in <head> so the policy governs as much of the document
+            as a meta-tag CSP can. See the block comment above for rationale
+            and the directives that must move to HTTP headers post-migration. */}
+        <meta httpEquiv="Content-Security-Policy" content={cspContent} />
+      </head>
       <body className="min-h-full flex flex-col overflow-x-clip">
         <script
           type="application/ld+json"

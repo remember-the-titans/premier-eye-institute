@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { Camera, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { withBasePath } from "@/lib/base-path";
 import { buildGlassesModel, FRAME_COLORS, LENS_SEPARATION } from "./glasses-model";
 
 // Stable MediaPipe Face Landmarker indices used to anatomically fit the frame:
@@ -67,8 +68,16 @@ export function VirtualTryOn() {
       );
       if (cancelled) return;
 
+      // Self-hosted MediaPipe assets (supply-chain hardening): the WASM
+      // runtime and the FaceLandmarker model are served from our own origin
+      // under /public/mediapipe instead of cdn.jsdelivr.net / googleapis.com,
+      // so a compromise of those CDNs can't inject code into this page. The
+      // WASM files are copied from node_modules/@mediapipe/tasks-vision/wasm
+      // (kept in sync with the pinned package version); the .task model is the
+      // pinned float16/1 build. withBasePath() keeps the URLs correct under
+      // the GitHub Pages subpath.
       const filesetResolver = await FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
+        withBasePath("/mediapipe/wasm"),
       );
       if (cancelled) return;
 
@@ -76,8 +85,9 @@ export function VirtualTryOn() {
         filesetResolver,
         {
           baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            modelAssetPath: withBasePath(
+              "/mediapipe/models/face_landmarker.task",
+            ),
             delegate: "GPU",
           },
           runningMode: "VIDEO",

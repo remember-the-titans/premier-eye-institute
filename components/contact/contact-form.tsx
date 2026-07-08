@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { site } from "@/lib/site";
+import { contactSchema, HONEYPOT_FIELD } from "@/lib/contact-schema";
 
 type Status = "idle" | "submitting" | "success";
 
@@ -34,26 +35,55 @@ export function ContactForm() {
     e.preventDefault();
     const form = e.currentTarget;
     const data = new FormData(form);
-    const next: Record<string, string> = {};
 
-    if (!String(data.get("name") ?? "").trim())
-      next.name = "Please tell us your name.";
-    const phone = String(data.get("phone") ?? "").trim();
-    const email = String(data.get("email") ?? "").trim();
-    if (!phone && !email)
-      next.phone = "Add a phone number or email so we can reach you.";
-    if (email && !/^\S+@\S+\.\S+$/.test(email))
-      next.email = "That email doesn't look right — check for typos.";
-    if (!String(data.get("message") ?? "").trim())
-      next.message = "Let us know how we can help.";
+    // Honeypot: a hidden field no human fills. If it's populated, silently
+    // treat as spam — show the normal success state so bots get no signal,
+    // but never "send". (Also re-checked server-side when the form is wired.)
+    if (String(data.get(HONEYPOT_FIELD) ?? "").trim() !== "") {
+      setStatus("success");
+      return;
+    }
 
-    setErrors({ ...next });
-    if (Object.keys(next).length > 0) return;
+    // Validate with the SHARED schema (lib/contact-schema.ts) — the same one
+    // the server must re-run once this form talks to a real backend.
+    const result = contactSchema.safeParse({
+      name: String(data.get("name") ?? ""),
+      email: String(data.get("email") ?? ""),
+      phone: String(data.get("phone") ?? ""),
+      topic: String(data.get("topic") ?? "appointment"),
+      message: String(data.get("message") ?? ""),
+    });
+
+    if (!result.success) {
+      const next: Record<string, string> = {};
+      for (const issue of result.error.issues) {
+        const field = String(issue.path[0] ?? "");
+        if (field && !next[field]) next[field] = issue.message;
+      }
+      setErrors(next);
+      return;
+    }
+    setErrors({});
 
     setStatus("submitting");
-    /* No form backend is wired up yet — connect this to Formspree, Resend,
-       or the practice's email before launch. We simulate the round trip so
-       the UX (loading + confirmation) is complete. */
+
+    // ─────────────────────────────────────────────────────────────────────
+    // TODO(form-backend): NO real submission is wired up yet — this only
+    // simulates the round trip so the loading + confirmation UX is complete.
+    // Before connecting this to a real service (Formspree / Resend / an API
+    // route), the following MUST be added — see SECURITY_TODO.md:
+    //   1. Rate limiting on the receiving endpoint (per-IP throttle) to blunt
+    //      spam/abuse floods.
+    //   2. Server-side validation by re-running `contactSchema` on the raw
+    //      payload — never trust this client-side pass alone.
+    //   3. Escape/encode every field before rendering it into any email or
+    //      HTML template (prevent HTML/header injection in the notification).
+    //   4. Spam protection: re-check the honeypot server-side AND add a
+    //      real challenge (e.g. Cloudflare Turnstile / hCaptcha) since a
+    //      honeypot alone won't stop a targeted bot.
+    //   5. Transport: POST over HTTPS only; consider a CSRF token if the
+    //      endpoint is same-origin and cookie-authenticated.
+    // ─────────────────────────────────────────────────────────────────────
     await new Promise((r) => setTimeout(r, 900));
     setStatus("success");
   };
@@ -87,7 +117,7 @@ export function ContactForm() {
       ref={formRef}
       onSubmit={onSubmit}
       noValidate
-      className="rounded-lg border border-ink/[0.07] bg-white p-6 shadow-warm sm:p-8"
+      className="relative rounded-lg border border-ink/[0.07] bg-white p-6 shadow-warm sm:p-8"
     >
       <h3 className="font-heading text-2xl font-semibold text-ink">
         Send us a message
@@ -96,6 +126,26 @@ export function ContactForm() {
         Questions about services, insurance, or appointments — we&apos;ll
         reply within one business day.
       </p>
+
+      {/*
+        Honeypot — a decoy field for spam bots. Hidden off-screen (not
+        display:none, which some bots skip), removed from the tab order, and
+        aria-hidden so screen readers ignore it entirely. A real visitor never
+        sees or fills it; a non-empty value is treated as spam in onSubmit.
+      */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -left-[9999px] h-px w-px overflow-hidden"
+      >
+        <label htmlFor="cf-company">Company (leave this field blank)</label>
+        <input
+          id="cf-company"
+          name={HONEYPOT_FIELD}
+          type="text"
+          tabIndex={-1}
+          autoComplete="off"
+        />
+      </div>
 
       <div className="mt-6 grid gap-5">
         <div className="grid gap-1.5">
@@ -180,8 +230,13 @@ export function ContactForm() {
             id="cf-message"
             name="message"
             rows={4}
+            maxLength={2000}
             aria-invalid={!!errors.message}
-            aria-describedby={errors.message ? "cf-message-error" : undefined}
+            aria-describedby={
+              errors.message
+                ? "cf-message-error cf-message-note"
+                : "cf-message-note"
+            }
             className="rounded-md"
           />
           {errors.message && (
@@ -189,6 +244,11 @@ export function ContactForm() {
               {errors.message}
             </p>
           )}
+          <p id="cf-message-note" className="text-[12px] leading-relaxed text-soft">
+            Please don&apos;t include sensitive medical details here. This form
+            isn&apos;t monitored for emergencies — for urgent medical needs,
+            call 911.
+          </p>
         </div>
 
         <Button
@@ -205,10 +265,6 @@ export function ContactForm() {
             "Send Message"
           )}
         </Button>
-        <p className="text-[12px] leading-relaxed text-soft">
-          For medical emergencies, call 911. Please don&apos;t include
-          sensitive health details in this form.
-        </p>
       </div>
     </form>
   );
